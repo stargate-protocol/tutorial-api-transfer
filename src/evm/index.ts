@@ -1,11 +1,12 @@
 import axios from 'axios';
-import { createPublicClient, createWalletClient, http, parseEther, parseUnits } from 'viem';
+import { createPublicClient, createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { mainnet, polygon } from 'viem/chains';
+import { mainnet } from 'viem/chains';
+import * as dotenv from 'dotenv';
+dotenv.config();
 
 // Replace with your actual private key - NEVER hardcode in production code
-// Use environment variables or a secure vault
-const PRIVATE_KEY = '0xprivKey';
+const PRIVATE_KEY = process.env.PRIVATE_KEY as `0x${string}`
 const account = privateKeyToAccount(PRIVATE_KEY);
 
 // Initialize clients
@@ -22,16 +23,17 @@ const walletClient = createWalletClient({
 
 async function fetchStargateRoutes() {
   try {
+    // Fetching route for USDC transfer from Ethereum to Polygon - https://docs.stargate.finance
     const response = await axios.get('https://stargate.finance/api/v1/routes', {
       params: {
-        srcToken: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-        dstToken: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
+        srcToken: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC on Ethereum
+        dstToken: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC on Polygon
         srcAddress: '0x0C0d18aa99B02946C70EAC6d47b8009b993c9BfF',
         dstAddress: '0x0C0d18aa99B02946C70EAC6d47b8009b993c9BfF',
-        srcChainKey: 'ethereum',
+        srcChainKey: 'ethereum', // All chainKeys - https://stargate.finance/api/v1/chains
         dstChainKey: 'polygon',
-        srcAmount: '10000000',
-        dstAmountMin: '9000000'
+        srcAmount: '1000000', // 1 USDC (6 decimals)
+        dstAmountMin: '900000' // Amount to receive deducted by Stargate fees (max 0.15%)
       }
     });
     
@@ -42,7 +44,6 @@ async function fetchStargateRoutes() {
       console.error('Axios error:', error.message);
       if (error.response) {
         console.error('Response data:', error.response.data);
-        console.error('Response status:', error.response.status);
       }
     } else {
       console.error('Unexpected error:', error);
@@ -57,6 +58,9 @@ async function executeStargateTransaction() {
     const routesData = await fetchStargateRoutes();
     
     // 2. Get the first route (or implement your own selection logic)
+    // Here you can select from all the supported routes including StargateV2:Taxi, StargateBus or CCTP
+    // Supported routes are different for each token
+    // Each route contains all transactions required to execute the transfer given in executable order
     const selectedRoute = routesData.routes[0];
     if (!selectedRoute) {
       throw new Error('No routes available');
@@ -70,7 +74,7 @@ async function executeStargateTransaction() {
       console.log(`Executing step ${i + 1}/${selectedRoute.steps.length}:`, executableTransaction);
       
       // Create transaction object, only include value if it exists and is not empty
-      const txParams: any = {
+      const txParams: Record<string, unknown> = {
         account,
         to: executableTransaction.to,
         data: executableTransaction.data,
@@ -98,11 +102,11 @@ async function executeStargateTransaction() {
   }
 }
 
-// Call the function to execute the transaction
-executeStargateTransaction()
-  .then(receipt => {
+// Execute the transaction
+void executeStargateTransaction()
+  .then(() => {
     console.log('Successfully executed Stargate transaction');
   })
-  .catch(err => {
+  .catch((err) => {
     console.error('Failed to execute Stargate transaction:', err);
   });
