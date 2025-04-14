@@ -6,7 +6,7 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 // Replace with your actual private key - NEVER hardcode in production code
-const PRIVATE_KEY = process.env.PRIVATE_KEY as `0x${string}`
+const PRIVATE_KEY = process.env.EVM_PRIVATE_KEY as `0x${string}`
 const account = privateKeyToAccount(PRIVATE_KEY);
 
 // Initialize clients

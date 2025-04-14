@@ -32,6 +32,12 @@ Transfer USDC from Ethereum to Polygon (EVM)
 yarn run execute:evm
 ```
 
+Transfer USDC from Solana to Optimism (EVM)
+
+```shell
+yarn run execute:solana
+```
+
 ## Join the community
 
 Join our Community of developers creating universal apps.
