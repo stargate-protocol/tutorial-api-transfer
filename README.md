@@ -1,6 +1,6 @@
 # Tutorial Stargate API Cross-Chain Transfer 
 
-![Stargate Finance](https://stargate.finance/static/og-image.jpg)
+![Stargate API Tutorial](public/Github_banner_api.jpg)
 
 This repository demonstrates how to use the Stargate API to perform cross-chain token transfers. Stargate is a protocol that enables seamless asset transfers between different blockchain networks.
 
