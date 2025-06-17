@@ -24,7 +24,7 @@ const walletClient = createWalletClient({
 async function fetchStargateRoutes() {
   try {
     // Fetching route for USDC transfer from Ethereum to Polygon - https://docs.stargate.finance
-    const response = await axios.get('https://stargate.finance/api/v1/routes', {
+    const response = await axios.get('https://stargate.finance/api/v1/quotes', {
       params: {
         srcToken: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC on Ethereum
         dstToken: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC on Polygon
@@ -37,7 +37,7 @@ async function fetchStargateRoutes() {
       }
     });
     
-    console.log('Stargate routes data:', response.data);
+    console.log('Stargate quotes data:', response.data);
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error)) {
@@ -54,16 +54,16 @@ async function fetchStargateRoutes() {
 
 async function executeStargateTransaction() {
   try {
-    // 1. Fetch routes data
+    // 1. Fetch quotes data
     const routesData = await fetchStargateRoutes();
     
     // 2. Get the first route (or implement your own selection logic)
     // Here you can select from all the supported routes including StargateV2:Taxi, StargateBus or CCTP
     // Supported routes are different for each token
     // Each route contains all transactions required to execute the transfer given in executable order
-    const selectedRoute = routesData.routes[0];
+    const selectedRoute = routesData.quotes[0];
     if (!selectedRoute) {
-      throw new Error('No routes available');
+      throw new Error('No quotes available');
     }
     
     console.log('Selected route:', selectedRoute);  

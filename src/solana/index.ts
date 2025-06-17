@@ -39,10 +39,10 @@ const connection = new web3.Connection(
 // For sending FROM Solana TO another chain (e.g., Ethereum)
 async function sendFromSolanaToOtherChain() {
   try {
-    // This would require fetching a route with Solana as the source chain
+    // This would require fetching a quotes with Solana as the source chain
     
     // 1. First, we would fetch the appropriate route
-    const response = await axios.get('https://stargate.finance/api/v1/routes', {
+    const response = await axios.get('https://stargate.finance/api/v1/quotes', {
       params: {
         srcToken: 'DEkqHyPN7GMRJ5cArtQFAWefqbZb33Hyf6s5iCwjEonT', // Token on Solana
         dstToken: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34', // Token on destination chain
@@ -55,19 +55,19 @@ async function sendFromSolanaToOtherChain() {
       }
     });
     
-    const routeData = response.data;
-    console.log('Route for sending from Solana:', routeData);
+    const quotesData = response.data;
+    console.log('Quotes for sending from Solana:', quotesData);
     
-    if (!routeData.routes || routeData.routes.length === 0) {
-      throw new Error('No routes available for sending from Solana');
+    if (!quotesData.quotes || quotesData.quotes.length === 0) {
+      throw new Error('No quotes available for sending from Solana');
     }
     
-    const route = routeData.routes[0];
+    const quote = quotesData.quotes[0]; 
     
-    // 2. Execute each step in the route
-    for (let i = 0; i < route.steps.length; i++) {
-      const step = route.steps[i];
-      console.log(`Executing step ${i + 1}/${route.steps.length}:`, step);
+    // 2. Execute each step in the quote
+    for (let i = 0; i < quote.steps.length; i++) {
+      const step = quote.steps[i];
+      console.log(`Executing step ${i + 1}/${quote.steps.length}:`, step);
       
       // For Solana, the transaction would typically be provided as serialized data
       // We would deserialize, sign, and send it
