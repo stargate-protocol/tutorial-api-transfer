@@ -1,116 +1,72 @@
 import axios from 'axios';
 import * as web3 from '@solana/web3.js';
-import * as dotenv from 'dotenv';
 import * as bs58 from 'bs58';
+import dotenv from 'dotenv';
+
 dotenv.config();
 
-// Initialize Solana connection and wallet
 const PRIVATE_KEY = process.env.SOLANA_PRIVATE_KEY as string;
+const FEE_PAYER_PRIVATE_KEY = process.env.SOLANA_FEE_PAYER_PRIVATE_KEY as string;
+const keypair = web3.Keypair.fromSecretKey(bs58.default.decode(PRIVATE_KEY));
+const feePayerKeypair = web3.Keypair.fromSecretKey(bs58.default.decode(FEE_PAYER_PRIVATE_KEY));
 
-// Convert private key from string to Uint8Array
-let privateKeyBytes;
-try {
-  // Try to interpret as hex string (without 0x prefix)
-  privateKeyBytes = Buffer.from(PRIVATE_KEY.replace(/^0x/, ''), 'hex');
-  
-  // Check if length is correct (should be 64 bytes for Ed25519)
-  if (privateKeyBytes.length !== 64) {
-    // Alternatively, try as base58 (Solana CLI format)
-    privateKeyBytes = Buffer.from(bs58.default.decode(PRIVATE_KEY));
-  }
-} catch (error) {
-  console.error('Error parsing private key:', error);
-  throw new Error('Invalid private key format. Must be hex or base58 encoded.');
-}
+const connection = new web3.Connection(web3.clusterApiUrl('mainnet-beta'), 'confirmed');
 
-// Make sure the key has correct length
-if (privateKeyBytes.length !== 64) {
-  throw new Error(`Bad secret key size: ${privateKeyBytes.length}. Expected 64 bytes.`);
-}
-
-const keypair = web3.Keypair.fromSecretKey(privateKeyBytes);
-
-// Initialize Solana connection
-const connection = new web3.Connection(
-  web3.clusterApiUrl('mainnet-beta'),
-  'confirmed'
-);
-
-// For sending FROM Solana TO another chain (e.g., Ethereum)
 async function sendFromSolanaToOtherChain() {
   try {
-    // This would require fetching a quotes with Solana as the source chain
-    
-    // 1. First, we would fetch the appropriate route
+    // Get quote from Stargate API
     const response = await axios.get('https://stargate.finance/api/v1/quotes', {
       params: {
-        srcToken: 'DEkqHyPN7GMRJ5cArtQFAWefqbZb33Hyf6s5iCwjEonT', // Token on Solana
-        dstToken: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34', // Token on destination chain
-        srcAddress: '9hWTHmE8T2fTeuog1K2ZzBtg8pfKhh3fcYAJUo54Vz37', // Source address
-        dstAddress: '0x9F1473c484Ce6b227538765b1c996DDfEc853DAA', // Destination address
+        srcToken: '2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv',
+        dstToken: '0x6418c0dd099a9FDA397C766304CDd918233E8847',
+        srcAddress: keypair.publicKey.toString(),
+        dstAddress: '0x6d9F1a927CBcb5e2c28D13CA735bc6d6131406da',
         srcChainKey: 'solana',
-        dstChainKey: 'optimism',
-        srcAmount: '3308758007', // Amount to send
-        dstAmountMin: '3215670426000000000' // Minimum to receive after fees
+        dstChainKey: 'ethereum',
+        srcAmount: '2000000',
+        dstAmountMin: '0',
+        feePayer: feePayerKeypair.publicKey.toString(),
+        _vercel_share: 'qQulgzRmvVtphIYdSVliBm2Q5f2ODoV0'
+      },
+      headers: {
+        'Cookie': '_vercel_jwt=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJieXBhc3MiOiJxUXVsZ3pSbXZWdHBoSVlkU1ZsaUJtMlE1ZjJPRG9WMCIsImF1ZCI6InN0YXJnYXRlLW1haW5uZXQtZ2l0LWZlYXQtZmVlLXBheWVyLXN0YXJnYXRlLWZvdW5kYXRpb24udmVyY2VsLmFwcCIsImlhdCI6MTc1MzM1MzU3Miwic3ViIjoicHJvdGVjdGlvbi1ieXBhc3MtdXJsIn0.GDDFL4u0eFEdiIXEb5VUMgVC0MCXJnmy9f2lUNQ3K_E'
       }
     });
     
-    const quotesData = response.data;
-    console.log('Quotes for sending from Solana:', quotesData);
+    const quote = response.data.quotes[0];
+    const step = quote.steps[0];
     
-    if (!quotesData.quotes || quotesData.quotes.length === 0) {
-      throw new Error('No quotes available for sending from Solana');
-    }
+    console.log('Executing Stargate transaction...');
     
-    const quote = quotesData.quotes[0]; 
+    // Decode and deserialize transaction
+    const transactionBuffer = Buffer.from(step.transaction.data, 'base64');
+    const versionedMessage = web3.VersionedMessage.deserialize(transactionBuffer);
+    const transaction = new web3.VersionedTransaction(versionedMessage);
     
-    // 2. Execute each step in the quote
-    for (let i = 0; i < quote.steps.length; i++) {
-      const step = quote.steps[i];
-      console.log(`Executing step ${i + 1}/${quote.steps.length}:`, step);
-      
-      // For Solana, the transaction would typically be provided as serialized data
-      // We would deserialize, sign, and send it
-      if (step.transaction && step.transaction.data) {
-        // The format depends on Stargate's API response for Solana transactions
-        // This is a simplified example - actual implementation would depend on the API response format
-        
-        // If data is provided as a serialized transaction
-        const transactionBuffer = Buffer.from(step.transaction.data, 'base64');
-        
-        // Use VersionedMessage.deserialize instead of Transaction.from
-        const versionedMessage = web3.VersionedMessage.deserialize(transactionBuffer);
-        const transaction = new web3.VersionedTransaction(versionedMessage);
-        
-        // Sign and send the transaction
-        transaction.sign([keypair]);
-        const signature = await connection.sendTransaction(transaction);
-        
-        // Wait for confirmation
-        const latestBlockHash = await connection.getLatestBlockhash();
-        await connection.confirmTransaction({
-          signature,
-          blockhash: latestBlockHash.blockhash,
-          lastValidBlockHeight: latestBlockHash.lastValidBlockHeight
-        });
-        
-        console.log(`Transaction signature: ${signature}`);
-      }
-    }
+    // Sign with both keypairs
+    const signers = [keypair, feePayerKeypair];
+    transaction.sign(signers);
     
-    return true;
+    // Send transaction
+    const signature = await connection.sendTransaction(transaction);
+    console.log('Transaction signature:', signature);
+    
+    // Wait for confirmation
+    const blockHash = await connection.getLatestBlockhash();
+    await connection.confirmTransaction({
+      signature,
+      blockhash: blockHash.blockhash,
+      lastValidBlockHeight: blockHash.lastValidBlockHeight
+    });
+    
+    console.log('Transaction confirmed successfully!');
   } catch (error) {
-    console.error('Error sending from Solana:', error);
+    console.error('Error:', error);
     throw error;
   }
 }
 
-
-void sendFromSolanaToOtherChain()
-  .then(() => {
-    console.log('Successfully sent tokens from Solana');
-  })
-  .catch((err) => {
-    console.error('Failed to send tokens from Solana:', err);
-  });
+sendFromSolanaToOtherChain()
+  .then(() => console.log('Success!'))
+  .catch((error) => console.error('Failed:', error));
 
