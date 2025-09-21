@@ -38,6 +38,12 @@ Transfer USDC from Solana to Optimism (EVM)
 yarn run execute:solana
 ```
 
+Transfer USDT from TRON to Ethereum (EVM)
+
+```shell
+yarn run execute:tron
+```
+
 ## Join the community
 
 Join our Community of developers creating universal apps.

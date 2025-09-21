@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "execute:evm": "npx ts-node src/evm/index.ts",
-    "execute:solana": "npx ts-node src/solana/index.ts"
+    "execute:solana": "npx ts-node src/solana/index.ts",
+    "execute:tron": "npx ts-node src/tron/index.ts"
   },
   "author": "",
   "license": "ISC",
@@ -15,6 +16,7 @@
     "axios": "^1.8.4",
     "bs58": "^6.0.0",
     "dotenv": "^16.4.7",
+    "tronweb": "^6.0.4",
     "typescript": "^5.8.3",
     "viem": "^2.26.2"
   },
