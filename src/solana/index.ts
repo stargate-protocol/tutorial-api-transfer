@@ -99,10 +99,10 @@ async function executeSolanaSteps(steps: UserTransactionStep[]) {
     const vtx = new web3.VersionedTransaction(msg);
     vtx.sign([keypair]);
 
-    const sig = await connection.sendTransaction(vtx);
+    const signature = await connection.sendTransaction(vtx);
     const latest = await connection.getLatestBlockhash();
     await connection.confirmTransaction({
-      signature: sig,
+      signature,
       blockhash: latest.blockhash,
       lastValidBlockHeight: latest.lastValidBlockHeight,
     });

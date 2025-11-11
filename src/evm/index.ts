@@ -4,7 +4,7 @@ import { optimism } from 'viem/chains';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-const API = 'https://stargate.finance/api/unstable';
+const API = 'https://stargate.finance/api/v2';
 const API_KEY = process.env.STARGATE_API_KEY!;
 const PRIVATE_KEY = process.env.EVM_PRIVATE_KEY as `0x${string}`;
 const account = privateKeyToAccount(PRIVATE_KEY);
@@ -103,11 +103,6 @@ async function submitSignature(quoteId: string, signatures: string[]) {
   await postJson<Record<string, never>>('/submit-signature', { quoteId, signatures });
 }
 
-function toBigIntOrUndefined(v: string | bigint | undefined): bigint | undefined {
-  if (v === undefined) return undefined;
-  return typeof v === 'string' ? BigInt(v) : v;
-}
-
 async function executeEvmTransaction(step: TransactionStep) {
   const tx = step.transaction.encoded;
 
@@ -115,7 +110,7 @@ async function executeEvmTransaction(step: TransactionStep) {
     account,
     to: tx.to,
     data: tx.data,
-    value: toBigIntOrUndefined(tx.value) ?? 0n,
+    value: BigInt(tx.value ?? 0n),
   });
 
   await client.waitForTransactionReceipt({ hash });
@@ -135,8 +130,8 @@ async function run() {
   const { body } = await buildUserSteps(quote.id);
   for (const step of body.userSteps) {
     if (step.type === 'SIGNATURE') {
-      const sig = await signEip712(step);
-      await submitSignature(quote.id, [sig]);
+      const signature = await signEip712(step);
+      await submitSignature(quote.id, [signature]);
     } else if (step.type === 'TRANSACTION') {
       await executeEvmTransaction(step);
     }
