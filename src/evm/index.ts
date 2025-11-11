@@ -1,112 +1,146 @@
-import axios from 'axios';
-import { createPublicClient, createWalletClient, http } from 'viem';
+import { createWalletClient, createPublicClient, http, type TypedDataDefinition } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { mainnet } from 'viem/chains';
+import { optimism } from 'viem/chains';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-// Replace with your actual private key - NEVER hardcode in production code
-const PRIVATE_KEY = process.env.EVM_PRIVATE_KEY as `0x${string}`
+const API = 'https://stargate.finance/api/unstable';
+const API_KEY = process.env.STARGATE_API_KEY!;
+const PRIVATE_KEY = process.env.EVM_PRIVATE_KEY as `0x${string}`;
 const account = privateKeyToAccount(PRIVATE_KEY);
+const wallet = createWalletClient({ account, chain: optimism, transport: http() });
+const client = createPublicClient({ chain: optimism, transport: http() });
 
-// Initialize clients
-const ethereumClient = createPublicClient({
-  chain: mainnet,
-  transport: http()
-});
+type AmountType = 'EXACT_SRC_AMOUNT';
+type FeeTolerance = { type: 'PERCENT'; amount?: number };
 
-const walletClient = createWalletClient({
-  account,
-  chain: mainnet,
-  transport: http()
-});
+type GetQuotesInput = {
+  srcTokenAddress: string;
+  dstTokenAddress: string;
+  srcChainKey: string;
+  dstChainKey: string;
+  amount: string | bigint;
+  srcWalletAddress: string;
+  dstWalletAddress: string;
+  options: {
+    amountType?: AmountType;
+    feeTolerance?: FeeTolerance;
+    dstNativeDropAmount?: number | bigint;
+  };
+};
 
-async function fetchStargateRoutes() {
-  try {
-    // Fetching route for USDC transfer from Ethereum to Polygon - https://docs.stargate.finance
-    const response = await axios.get('https://stargate.finance/api/v1/quotes', {
-      params: {
-        srcToken: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC on Ethereum
-        dstToken: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC on Polygon
-        srcAddress: '0x0C0d18aa99B02946C70EAC6d47b8009b993c9BfF',
-        dstAddress: '0x0C0d18aa99B02946C70EAC6d47b8009b993c9BfF',
-        srcChainKey: 'ethereum', // All chainKeys - https://stargate.finance/api/v1/chains
-        dstChainKey: 'polygon',
-        srcAmount: '1000000', // 1 USDC (6 decimals)
-        dstAmountMin: '900000' // Amount to receive deducted by Stargate fees (max 0.15%)
-      }
-    });
-    
-    console.log('Stargate quotes data:', response.data);
-    return response.data;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error('Axios error:', error.message);
-      if (error.response) {
-        console.error('Response data:', error.response.data);
-      }
-    } else {
-      console.error('Unexpected error:', error);
-    }
-    throw error;
-  }
-}
+type QuoteHead = { id: string };
+type GetQuotesResult = { quotes: QuoteHead[] };
 
-async function executeStargateTransaction() {
-  try {
-    // 1. Fetch quotes data
-    const routesData = await fetchStargateRoutes();
-    
-    // 2. Get the first route (or implement your own selection logic)
-    // Here you can select from all the supported routes including StargateV2:Taxi, StargateBus or CCTP
-    // Supported routes are different for each token
-    // Each route contains all transactions required to execute the transfer given in executable order
-    const selectedRoute = routesData.quotes[0];
-    if (!selectedRoute) {
-      throw new Error('No quotes available');
-    }
-    
-    console.log('Selected route:', selectedRoute);  
+type EvmEncodedTx = {
+  chainId: number;
+  to: `0x${string}`;
+  data?: `0x${string}`;
+  value?: string | bigint;
+  from?: `0x${string}`;
+  gasLimit?: string | bigint;
+};
 
-    // Execute all transactions in the route steps
-    for (let i = 0; i < selectedRoute.steps.length; i++) {
-      const executableTransaction = selectedRoute.steps[i].transaction;
-      console.log(`Executing step ${i + 1}/${selectedRoute.steps.length}:`, executableTransaction);
-      
-      // Create transaction object, only include value if it exists and is not empty
-      const txParams: Record<string, unknown> = {
-        account,
-        to: executableTransaction.to,
-        data: executableTransaction.data,
-      };
-      
-      // Only add value if it exists and is not empty
-      if (executableTransaction.value && executableTransaction.value !== '0') {
-        txParams.value = BigInt(executableTransaction.value);
-      }
-      
-      // Execute the transaction
-      const txHash = await walletClient.sendTransaction(txParams);
-      console.log(`Step ${i + 1} transaction hash: ${txHash}`);
-      
-      // Wait for transaction to be mined
-      const receipt = await ethereumClient.waitForTransactionReceipt({ hash: txHash });
-      console.log(`Step ${i + 1} transaction confirmed:`, receipt);
-    }
-    
-    console.log('All steps executed successfully');
-    return true;
-  } catch (error) {
-    console.error('Error executing Stargate transaction:', error);
-    throw error;
-  }
-}
+type TransactionStep = {
+  type: 'TRANSACTION';
+  chainKey: string;
+  chainType: 'EVM';
+  description: string;
+  signerAddress: `0x${string}`;
+  transaction: { encoded: EvmEncodedTx };
+};
 
-// Execute the transaction
-void executeStargateTransaction()
-  .then(() => {
-    console.log('Successfully executed Stargate transaction');
-  })
-  .catch((err) => {
-    console.error('Failed to execute Stargate transaction:', err);
+type SignatureStep = {
+  type: 'SIGNATURE';
+  description: string;
+  chainKey?: string;
+  signerAddress: `0x${string}`;
+  signature: { type: 'EIP712'; typedData: TypedDataDefinition };
+};
+
+type UserStep = TransactionStep | SignatureStep;
+
+type BuildUserStepsResult = {
+  body: { userSteps: UserStep[] };
+};
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: {
+      'x-api-key': API_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
   });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<T>;
+}
+
+async function fetchQuotes(): Promise<GetQuotesResult> {
+  const payload: GetQuotesInput = {
+    srcTokenAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+    dstTokenAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+    srcChainKey: 'optimism',
+    dstChainKey: 'arbitrum',
+    amount: '1000000000000000',
+    srcWalletAddress: account.address,
+    dstWalletAddress: account.address,
+    options: {
+      amountType: 'EXACT_SRC_AMOUNT',
+      feeTolerance: { type: 'PERCENT', amount: 20 },
+      dstNativeDropAmount: 0,
+    },
+  };
+  return postJson<GetQuotesResult>('/quotes', payload);
+}
+
+async function buildUserSteps(quoteId: string) {
+  return postJson<BuildUserStepsResult>('/build-user-steps', { quoteId });
+}
+
+async function submitSignature(quoteId: string, signatures: string[]) {
+  await postJson<Record<string, never>>('/submit-signature', { quoteId, signatures });
+}
+
+function toBigIntOrUndefined(v: string | bigint | undefined): bigint | undefined {
+  if (v === undefined) return undefined;
+  return typeof v === 'string' ? BigInt(v) : v;
+}
+
+async function executeEvmTransaction(step: TransactionStep) {
+  const tx = step.transaction.encoded;
+
+  const hash = await wallet.sendTransaction({
+    account,
+    to: tx.to,
+    data: tx.data,
+    value: toBigIntOrUndefined(tx.value) ?? 0n,
+  });
+
+  await client.waitForTransactionReceipt({ hash });
+}
+
+async function signEip712(step: SignatureStep) {
+  const typed = step.signature.typedData;
+  const signature = await wallet.signTypedData(typed);
+  return signature;
+}
+
+async function run() {
+  const quotes = await fetchQuotes();
+  const quote = quotes.quotes?.[0];
+  if (!quote) throw new Error('No quote');
+
+  const { body } = await buildUserSteps(quote.id);
+  for (const step of body.userSteps) {
+    if (step.type === 'SIGNATURE') {
+      const sig = await signEip712(step);
+      await submitSignature(quote.id, [sig]);
+    } else if (step.type === 'TRANSACTION') {
+      await executeEvmTransaction(step);
+    }
+  }
+}
+
+void run();
