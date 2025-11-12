@@ -59,10 +59,12 @@ type SignatureStep = {
 };
 
 type UserStep = TransactionStep | SignatureStep;
-
 type BuildUserStepsResult = {
-  body: { userSteps: UserStep[] };
+  userSteps: UserStep[];
 };
+
+type Status = 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
+type GetStatusResult = { status: Status; explorerUrl?: string };
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
@@ -77,18 +79,27 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: 'GET',
+    headers: { 'x-api-key': API_KEY },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<T>;
+}
+
 async function fetchQuotes(): Promise<GetQuotesResult> {
   const payload: GetQuotesInput = {
     srcTokenAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
     dstTokenAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
     srcChainKey: 'optimism',
     dstChainKey: 'arbitrum',
-    amount: '1000000000000000',
+    amount: '100000000000000',
     srcWalletAddress: account.address,
     dstWalletAddress: account.address,
     options: {
       amountType: 'EXACT_SRC_AMOUNT',
-      feeTolerance: { type: 'PERCENT', amount: 20 },
+      feeTolerance: { type: 'PERCENT', amount: 1 },
       dstNativeDropAmount: 0,
     },
   };
@@ -103,6 +114,21 @@ async function submitSignature(quoteId: string, signatures: string[]) {
   await postJson<Record<string, never>>('/submit-signature', { quoteId, signatures });
 }
 
+async function getStatus(quoteId: string, txHash?: `0x${string}`) {
+  const query = txHash ? `?txHash=${txHash}` : '';
+  return getJson<GetStatusResult>(`/status/${encodeURIComponent(quoteId)}${query}`);
+}
+
+async function pollStatus(quoteId: string, txHash?: `0x${string}`) {
+  const deadline = Date.now() + 5 * 60_000;
+  for (;;) {
+    const { status } = await getStatus(quoteId, txHash);
+    if (status === 'SUCCEEDED' || status === 'FAILED' || status === 'UNKNOWN') return status;
+    if (Date.now() > deadline) return 'UNKNOWN';
+    await new Promise((r) => setTimeout(r, 4_000));
+  }
+}
+
 async function executeEvmTransaction(step: TransactionStep) {
   const tx = step.transaction.encoded;
 
@@ -114,6 +140,7 @@ async function executeEvmTransaction(step: TransactionStep) {
   });
 
   await client.waitForTransactionReceipt({ hash });
+  return hash;
 }
 
 async function signEip712(step: SignatureStep) {
@@ -124,18 +151,23 @@ async function signEip712(step: SignatureStep) {
 
 async function run() {
   const quotes = await fetchQuotes();
+  // You can implement a logic to choose the best quote here
   const quote = quotes.quotes?.[0];
   if (!quote) throw new Error('No quote');
 
-  const { body } = await buildUserSteps(quote.id);
-  for (const step of body.userSteps) {
+  const {userSteps} = await buildUserSteps(quote.id);
+  let txHash: `0x${string}` | undefined;
+  for (const step of userSteps) {
     if (step.type === 'SIGNATURE') {
       const signature = await signEip712(step);
       await submitSignature(quote.id, [signature]);
     } else if (step.type === 'TRANSACTION') {
-      await executeEvmTransaction(step);
+      txHash = await executeEvmTransaction(step);
     }
   }
+
+  const status = await pollStatus(quote.id, txHash);
+  console.log('Final status:', status);
 }
 
 void run();
