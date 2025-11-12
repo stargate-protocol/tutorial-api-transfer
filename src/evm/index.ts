@@ -1,4 +1,4 @@
-import { createWalletClient, createPublicClient, http, type TypedDataDefinition } from 'viem';
+import { createWalletClient, createPublicClient, http, type TypedDataDefinition, getAddress, verifyTypedData } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { optimism } from 'viem/chains';
 import * as dotenv from 'dotenv';
@@ -143,9 +143,33 @@ async function executeEvmTransaction(step: TransactionStep) {
   return hash;
 }
 
+// Normalizes message fields for correct EIP-712 signing.
+export function mapMessageTypes(
+  message: any,
+) {
+  return {
+    offerer: message.offerer,
+    recipient: message.recipient,
+    inputToken: message.inputToken,
+    outputToken: message.outputToken,
+    inputAmount: BigInt(message.inputAmount),
+    outputAmount: BigInt(message.outputAmount),
+    startTime: BigInt(message.startTime),
+    endTime:  BigInt(message.endTime),
+    srcEid: message.srcEid,
+    dstEid: message.dstEid
+  }
+}
+
 async function signEip712(step: SignatureStep) {
   const typed = step.signature.typedData;
-  const signature = await wallet.signTypedData(typed);
+  const signature = await wallet.signTypedData({
+    account,
+    domain: typed.domain,
+    types: typed.types,
+    primaryType: typed.primaryType,
+    message: mapMessageTypes(typed.message),
+  });
   return signature;
 }
 
@@ -154,8 +178,8 @@ async function run() {
   // You can implement a logic to choose the best quote here
   const quote = quotes.quotes?.[0];
   if (!quote) throw new Error('No quote');
-
   const {userSteps} = await buildUserSteps(quote.id);
+
   let txHash: `0x${string}` | undefined;
   for (const step of userSteps) {
     if (step.type === 'SIGNATURE') {
