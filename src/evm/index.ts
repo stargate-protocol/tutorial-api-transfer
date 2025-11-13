@@ -1,15 +1,16 @@
-import { createWalletClient, createPublicClient, http, type TypedDataDefinition, getAddress, verifyTypedData } from 'viem';
+import { createWalletClient, createPublicClient, http, type TypedDataDefinition, getAddress, verifyTypedData, Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { optimism } from 'viem/chains';
+import { base } from 'viem/chains';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+// Setup: initialize wallet and client
 const API = 'https://stargate.finance/api/v2';
 const API_KEY = process.env.STARGATE_API_KEY!;
-const PRIVATE_KEY = process.env.EVM_PRIVATE_KEY as `0x${string}`;
+const PRIVATE_KEY = process.env.EVM_PRIVATE_KEY as Hex;
 const account = privateKeyToAccount(PRIVATE_KEY);
-const wallet = createWalletClient({ account, chain: optimism, transport: http() });
-const client = createPublicClient({ chain: optimism, transport: http() });
+const wallet = createWalletClient({ account, chain: base, transport: http() });
+const client = createPublicClient({ chain: base, transport: http() });
 
 type AmountType = 'EXACT_SRC_AMOUNT';
 type FeeTolerance = { type: 'PERCENT'; amount?: number };
@@ -34,10 +35,10 @@ type GetQuotesResult = { quotes: QuoteHead[] };
 
 type EvmEncodedTx = {
   chainId: number;
-  to: `0x${string}`;
-  data?: `0x${string}`;
+  to: Hex;
+  data?: Hex;
   value?: string | bigint;
-  from?: `0x${string}`;
+  from?: Hex;
   gasLimit?: string | bigint;
 };
 
@@ -46,7 +47,7 @@ type TransactionStep = {
   chainKey: string;
   chainType: 'EVM';
   description: string;
-  signerAddress: `0x${string}`;
+  signerAddress: Hex;
   transaction: { encoded: EvmEncodedTx };
 };
 
@@ -54,7 +55,7 @@ type SignatureStep = {
   type: 'SIGNATURE';
   description: string;
   chainKey?: string;
-  signerAddress: `0x${string}`;
+  signerAddress: Hex;
   signature: { type: 'EIP712'; typedData: TypedDataDefinition };
 };
 
@@ -66,6 +67,7 @@ type BuildUserStepsResult = {
 type Status = 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
 type GetStatusResult = { status: Status; explorerUrl?: string };
 
+// Helper functions for API requests
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: 'POST',
@@ -88,18 +90,19 @@ async function getJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Core API calls
 async function fetchQuotes(): Promise<GetQuotesResult> {
   const payload: GetQuotesInput = {
     srcTokenAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
     dstTokenAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
-    srcChainKey: 'optimism',
-    dstChainKey: 'arbitrum',
+    srcChainKey: 'base',
+    dstChainKey: 'optimism',
     amount: '100000000000000',
     srcWalletAddress: account.address,
     dstWalletAddress: account.address,
     options: {
       amountType: 'EXACT_SRC_AMOUNT',
-      feeTolerance: { type: 'PERCENT', amount: 1 },
+      feeTolerance: { type: 'PERCENT', amount: 50 },
       dstNativeDropAmount: 0,
     },
   };
@@ -114,12 +117,13 @@ async function submitSignature(quoteId: string, signatures: string[]) {
   await postJson<Record<string, never>>('/submit-signature', { quoteId, signatures });
 }
 
-async function getStatus(quoteId: string, txHash?: `0x${string}`) {
+async function getStatus(quoteId: string, txHash?: Hex) {
   const query = txHash ? `?txHash=${txHash}` : '';
   return getJson<GetStatusResult>(`/status/${encodeURIComponent(quoteId)}${query}`);
 }
 
-async function pollStatus(quoteId: string, txHash?: `0x${string}`) {
+// Execution logic
+async function pollStatus(quoteId: string, txHash?: Hex) {
   const deadline = Date.now() + 5 * 60_000;
   for (;;) {
     const { status } = await getStatus(quoteId, txHash);
@@ -131,19 +135,17 @@ async function pollStatus(quoteId: string, txHash?: `0x${string}`) {
 
 async function executeEvmTransaction(step: TransactionStep) {
   const tx = step.transaction.encoded;
-
   const hash = await wallet.sendTransaction({
     account,
     to: tx.to,
     data: tx.data,
     value: BigInt(tx.value ?? 0n),
   });
-
   await client.waitForTransactionReceipt({ hash });
   return hash;
 }
 
-// Normalizes message fields for correct EIP-712 signing.
+// Normalizes message fields for EIP-712 signing.
 export function mapMessageTypes(
   message: any,
 ) {
@@ -178,10 +180,10 @@ async function run() {
   // You can implement a logic to choose the best quote here
   const quote = quotes.quotes?.[0];
   if (!quote) throw new Error('No quote');
-  const {userSteps} = await buildUserSteps(quote.id);
-
-  let txHash: `0x${string}` | undefined;
-  for (const step of userSteps) {
+  // NOTE: build user steps is not supported yet
+  // const {userSteps} = await buildUserSteps(quote.id);
+  let txHash: Hex | undefined;
+  for (const step of (quote as unknown as {userSteps: UserStep[]}).userSteps) {
     if (step.type === 'SIGNATURE') {
       const signature = await signEip712(step);
       await submitSignature(quote.id, [signature]);
