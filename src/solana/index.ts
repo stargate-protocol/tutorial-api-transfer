@@ -6,6 +6,7 @@ dotenv.config();
 const API = 'https://stargate.finance/api/v2';
 const API_KEY = process.env.STARGATE_API_KEY!;
 const PRIVATE_KEY = process.env.SOLANA_PRIVATE_KEY!;
+
 const connection = new web3.Connection(web3.clusterApiUrl('mainnet-beta'), 'confirmed');
 
 type FeeTolerance = { type: 'PERCENT'; amount?: number };
@@ -23,8 +24,10 @@ type GetQuotesInput = {
     dstNativeDropAmount?: number | bigint;
   };
 };
+
 type Quote = { id: string };
 type GetQuotesResult = { quotes: Quote[] };
+
 type SolanaTxEncoded = { encoding: 'base64'; data: string };
 type UserTransactionStep = {
   type: 'TRANSACTION';
@@ -32,10 +35,8 @@ type UserTransactionStep = {
 };
 type BuildUserStepsResult = { body: { userSteps: UserTransactionStep[] } };
 
-function assert<T>(v: T | undefined | null, msg: string): T {
-  if (v === undefined || v === null) throw new Error(msg);
-  return v;
-}
+type Status = 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
+type GetStatusResult = { status: Status; explorerUrl?: string };
 
 function parseSolanaSecretKey(raw: string): Uint8Array {
   const isHex = /^0x[0-9a-fA-F]+$/.test(raw) || /^[0-9a-fA-F]+$/.test(raw);
@@ -56,7 +57,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: 'POST',
     headers: {
-      'x-api-key': assert(API_KEY, 'Missing STARGATE_API_KEY'),
+      'x-api-key': API_KEY,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
@@ -65,29 +66,54 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function fetchQuote(): Promise<Quote> {
+async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: 'GET',
+    headers: { 'x-api-key': API_KEY },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<T>;
+}
+
+async function fetchQuotes(): Promise<GetQuotesResult> {
   const payload: GetQuotesInput = {
     srcChainKey: 'solana',
-    dstChainKey: 'optimism',
-    srcTokenAddress: 'DEkqHyPN7GMRJ5cArtQFAWefqbZb33Hyf6s5iCwjEonT',
-    dstTokenAddress: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34',
+    dstChainKey: 'arbitrum',
+    srcTokenAddress: 'CAW777xcHVTQZ4CRwVQGB8CV1BVKPm5bNVxFJHWFKiH8',
+    dstTokenAddress: '0x16f1967565aaD72DD77588a332CE445e7cEF752b',
     srcWalletAddress: keypair.publicKey.toBase58(),
-    dstWalletAddress: '0x9F1473c484Ce6b227538765b1c996DDfEc853DAA',
-    amount: '3308758007',
-    options: { amountType: 'EXACT_SRC_AMOUNT', feeTolerance: { type: 'PERCENT', amount: 20 }, dstNativeDropAmount: 0 },
+    dstWalletAddress: '0x6d9798053f498451bec79c0397f7f95b079bdcd6',
+    amount: '1000000000000',
+    options: {
+      amountType: 'EXACT_SRC_AMOUNT',
+      feeTolerance: { type: 'PERCENT', amount: 20 },
+      dstNativeDropAmount: 0,
+    },
   };
-
-  const result = await postJson<GetQuotesResult>('/quotes', payload);
-  const quote = result.quotes?.[0];
-  if (!quote) throw new Error('No quote');
-  return quote;
+  return postJson<GetQuotesResult>('/quotes', payload);
 }
 
 async function buildUserSteps(quoteId: string) {
   return postJson<BuildUserStepsResult>('/build-user-steps', { quoteId });
 }
 
+async function getStatus(quoteId: string, txSig?: string) {
+  const query = txSig ? `?txHash=${encodeURIComponent(txSig)}` : '';
+  return getJson<GetStatusResult>(`/status/${encodeURIComponent(quoteId)}${query}`);
+}
+
+async function pollStatus(quoteId: string, txSig?: string) {
+  const deadline = Date.now() + 5 * 60_000;
+  for (;;) {
+    const { status } = await getStatus(quoteId, txSig);
+    if (status === 'SUCCEEDED' || status === 'FAILED' || status === 'UNKNOWN') return status;
+    if (Date.now() > deadline) return 'UNKNOWN';
+    await new Promise((r) => setTimeout(r, 4_000));
+  }
+}
+
 async function executeSolanaSteps(steps: UserTransactionStep[]) {
+  let signature: string | undefined;
   for (const step of steps) {
     if (step.type !== 'TRANSACTION') continue;
 
@@ -99,7 +125,8 @@ async function executeSolanaSteps(steps: UserTransactionStep[]) {
     const vtx = new web3.VersionedTransaction(msg);
     vtx.sign([keypair]);
 
-    const signature = await connection.sendTransaction(vtx);
+    signature = await connection.sendTransaction(vtx);
+
     const latest = await connection.getLatestBlockhash();
     await connection.confirmTransaction({
       signature,
@@ -107,12 +134,20 @@ async function executeSolanaSteps(steps: UserTransactionStep[]) {
       lastValidBlockHeight: latest.lastValidBlockHeight,
     });
   }
+
+  return signature;
 }
 
 async function run() {
-  const quote = await fetchQuote();
-  const { body } = await buildUserSteps(quote.id);
-  await executeSolanaSteps(body.userSteps);
+  const quotes = await fetchQuotes();
+  const quote = quotes.quotes?.[0];
+  if (!quote) throw new Error('No quote');
+
+  const { body } = await buildUserSteps(quote.id); // Solana requires user steps to get tx
+  const txSig = await executeSolanaSteps(body.userSteps);
+
+  const status = await pollStatus(quote.id, txSig);
+  console.log('Final status:', status);
 }
 
 void run();
