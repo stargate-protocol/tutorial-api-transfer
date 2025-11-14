@@ -4,6 +4,7 @@ import { base } from 'viem/chains';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+// The code demonstrates how to use the Stargate API to fetch quotes and execute transactions.
 // Setup: initialize wallet and client
 const API = 'https://stargate.finance/api/v2';
 const API_KEY = process.env.STARGATE_API_KEY!;
@@ -90,7 +91,9 @@ async function getJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// Core API calls
+// Core API operations for Stargate cross-chain transfers.
+// Here, we fetch quotes for sending native tokens (ETH) from Base to Optimism.
+// The options specify to use the exact source amount and include a fee tolerance of 2%.
 async function fetchQuotes(): Promise<GetQuotesResult> {
   const payload: GetQuotesInput = {
     srcTokenAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
@@ -102,21 +105,30 @@ async function fetchQuotes(): Promise<GetQuotesResult> {
     dstWalletAddress: account.address,
     options: {
       amountType: 'EXACT_SRC_AMOUNT',
-      feeTolerance: { type: 'PERCENT', amount: 50 },
+      feeTolerance: { type: 'PERCENT', amount: 2 },
       dstNativeDropAmount: 0,
     },
   };
   return postJson<GetQuotesResult>('/quotes', payload);
 }
 
+// Builds user-interactive steps required to complete the transaction.
+// Useful for both signature requests (like EIP-712) and direct EVM transactions.
+// Can be integrated into a UI to guide users through signing messages or submitting transactions.
 async function buildUserSteps(quoteId: string) {
   return postJson<BuildUserStepsResult>('/build-user-steps', { quoteId });
 }
 
+// Submits signatures for a given quote.
+// Required for EIP-712 messages that need to be signed by the user.
+// Can be integrated into a UI to submit signatures after users have signed messages.
 async function submitSignature(quoteId: string, signatures: string[]) {
   await postJson<Record<string, never>>('/submit-signature', { quoteId, signatures });
 }
 
+// Checks the status of a transaction.
+// Useful for monitoring the progress of a transaction.
+// Can be integrated into a UI to display the status of a transaction.
 async function getStatus(quoteId: string, txHash?: Hex) {
   const query = txHash ? `?txHash=${txHash}` : '';
   return getJson<GetStatusResult>(`/status/${encodeURIComponent(quoteId)}${query}`);

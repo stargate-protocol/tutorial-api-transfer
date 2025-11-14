@@ -3,10 +3,10 @@ import bs58 from 'bs58';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+// Setup: initialize wallet and client
 const API = 'https://stargate.finance/api/v2';
 const API_KEY = process.env.STARGATE_API_KEY!;
 const PRIVATE_KEY = process.env.SOLANA_PRIVATE_KEY!;
-
 const connection = new web3.Connection(web3.clusterApiUrl('mainnet-beta'), 'confirmed');
 
 type FeeTolerance = { type: 'PERCENT'; amount?: number };
@@ -53,6 +53,7 @@ function parseSolanaSecretKey(raw: string): Uint8Array {
 
 const keypair = web3.Keypair.fromSecretKey(parseSolanaSecretKey(PRIVATE_KEY));
 
+// Helper functions for API requests
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     method: 'POST',
@@ -75,6 +76,9 @@ async function getJson<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Core API operations for Stargate cross-chain transfers.
+// Here, we fetch quotes for sending OFT tokens (CAW) from Solana to Arbitrum.
+// The options specify to use the exact source amount and include a fee tolerance of 2%.
 async function fetchQuotes(): Promise<GetQuotesResult> {
   const payload: GetQuotesInput = {
     srcChainKey: 'solana',
@@ -86,22 +90,29 @@ async function fetchQuotes(): Promise<GetQuotesResult> {
     amount: '1000000000000',
     options: {
       amountType: 'EXACT_SRC_AMOUNT',
-      feeTolerance: { type: 'PERCENT', amount: 20 },
+      feeTolerance: { type: 'PERCENT', amount: 2 },
       dstNativeDropAmount: 0,
     },
   };
   return postJson<GetQuotesResult>('/quotes', payload);
 }
 
+// Builds user-interactive steps required to complete the transaction.
+// Useful for both signature requests (like EIP-712) and direct Solana transactions.
+// Can be integrated into a UI to guide users through signing messages or submitting transactions.
 async function buildUserSteps(quoteId: string) {
   return postJson<BuildUserStepsResult>('/build-user-steps', { quoteId });
 }
 
+// Checks the status of a transaction.
+// Useful for monitoring the progress of a transaction.
+// Can be integrated into a UI to display the status of a transaction.
 async function getStatus(quoteId: string, txSig?: string) {
   const query = txSig ? `?txHash=${encodeURIComponent(txSig)}` : '';
   return getJson<GetStatusResult>(`/status/${encodeURIComponent(quoteId)}${query}`);
 }
 
+// Execution logic
 async function pollStatus(quoteId: string, txSig?: string) {
   const deadline = Date.now() + 5 * 60_000;
   for (;;) {
