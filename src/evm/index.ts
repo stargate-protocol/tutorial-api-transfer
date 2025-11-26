@@ -1,112 +1,211 @@
-import axios from 'axios';
-import { createPublicClient, createWalletClient, http } from 'viem';
+import { createWalletClient, createPublicClient, http, type TypedDataDefinition, getAddress, verifyTypedData, Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { mainnet } from 'viem/chains';
+import { base } from 'viem/chains';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-// Replace with your actual private key - NEVER hardcode in production code
-const PRIVATE_KEY = process.env.EVM_PRIVATE_KEY as `0x${string}`
+// The code demonstrates how to use the LayerZero API to fetch quotes and execute transactions.
+// Setup: initialize wallet and client
+const API = 'https://transfer.layerzero-api.com/v1';
+const API_KEY = process.env.STARGATE_API_KEY!;
+const PRIVATE_KEY = process.env.EVM_PRIVATE_KEY as Hex;
 const account = privateKeyToAccount(PRIVATE_KEY);
+const wallet = createWalletClient({ account, chain: base, transport: http() });
+const client = createPublicClient({ chain: base, transport: http() });
 
-// Initialize clients
-const ethereumClient = createPublicClient({
-  chain: mainnet,
-  transport: http()
-});
+type AmountType = 'EXACT_SRC_AMOUNT';
+type FeeTolerance = { type: 'PERCENT'; amount?: number };
 
-const walletClient = createWalletClient({
-  account,
-  chain: mainnet,
-  transport: http()
-});
+type GetQuotesInput = {
+  srcTokenAddress: string;
+  dstTokenAddress: string;
+  srcChainKey: string;
+  dstChainKey: string;
+  amount: string | bigint;
+  srcWalletAddress: string;
+  dstWalletAddress: string;
+  options: {
+    amountType?: AmountType;
+    feeTolerance?: FeeTolerance;
+    dstNativeDropAmount?: number | bigint;
+  };
+};
 
-async function fetchStargateRoutes() {
-  try {
-    // Fetching route for USDC transfer from Ethereum to Polygon - https://docs.stargate.finance
-    const response = await axios.get('https://stargate.finance/api/v1/quotes', {
-      params: {
-        srcToken: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', // USDC on Ethereum
-        dstToken: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC on Polygon
-        srcAddress: '0x0C0d18aa99B02946C70EAC6d47b8009b993c9BfF',
-        dstAddress: '0x0C0d18aa99B02946C70EAC6d47b8009b993c9BfF',
-        srcChainKey: 'ethereum', // All chainKeys - https://stargate.finance/api/v1/chains
-        dstChainKey: 'polygon',
-        srcAmount: '1000000', // 1 USDC (6 decimals)
-        dstAmountMin: '900000' // Amount to receive deducted by Stargate fees (max 0.15%)
-      }
-    });
-    
-    console.log('Stargate quotes data:', response.data);
-    return response.data;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error('Axios error:', error.message);
-      if (error.response) {
-        console.error('Response data:', error.response.data);
-      }
-    } else {
-      console.error('Unexpected error:', error);
-    }
-    throw error;
-  }
-}
+type QuoteHead = { id: string };
+type GetQuotesResult = { quotes: QuoteHead[] };
 
-async function executeStargateTransaction() {
-  try {
-    // 1. Fetch quotes data
-    const routesData = await fetchStargateRoutes();
-    
-    // 2. Get the first route (or implement your own selection logic)
-    // Here you can select from all the supported routes including StargateV2:Taxi, StargateBus or CCTP
-    // Supported routes are different for each token
-    // Each route contains all transactions required to execute the transfer given in executable order
-    const selectedRoute = routesData.quotes[0];
-    if (!selectedRoute) {
-      throw new Error('No quotes available');
-    }
-    
-    console.log('Selected route:', selectedRoute);  
+type EvmEncodedTx = {
+  chainId: number;
+  to: Hex;
+  data?: Hex;
+  value?: string | bigint;
+  from?: Hex;
+  gasLimit?: string | bigint;
+};
 
-    // Execute all transactions in the route steps
-    for (let i = 0; i < selectedRoute.steps.length; i++) {
-      const executableTransaction = selectedRoute.steps[i].transaction;
-      console.log(`Executing step ${i + 1}/${selectedRoute.steps.length}:`, executableTransaction);
-      
-      // Create transaction object, only include value if it exists and is not empty
-      const txParams: Record<string, unknown> = {
-        account,
-        to: executableTransaction.to,
-        data: executableTransaction.data,
-      };
-      
-      // Only add value if it exists and is not empty
-      if (executableTransaction.value && executableTransaction.value !== '0') {
-        txParams.value = BigInt(executableTransaction.value);
-      }
-      
-      // Execute the transaction
-      const txHash = await walletClient.sendTransaction(txParams);
-      console.log(`Step ${i + 1} transaction hash: ${txHash}`);
-      
-      // Wait for transaction to be mined
-      const receipt = await ethereumClient.waitForTransactionReceipt({ hash: txHash });
-      console.log(`Step ${i + 1} transaction confirmed:`, receipt);
-    }
-    
-    console.log('All steps executed successfully');
-    return true;
-  } catch (error) {
-    console.error('Error executing Stargate transaction:', error);
-    throw error;
-  }
-}
+type TransactionStep = {
+  type: 'TRANSACTION';
+  chainKey: string;
+  chainType: 'EVM';
+  description: string;
+  signerAddress: Hex;
+  transaction: { encoded: EvmEncodedTx };
+};
 
-// Execute the transaction
-void executeStargateTransaction()
-  .then(() => {
-    console.log('Successfully executed Stargate transaction');
-  })
-  .catch((err) => {
-    console.error('Failed to execute Stargate transaction:', err);
+type SignatureStep = {
+  type: 'SIGNATURE';
+  description: string;
+  chainKey?: string;
+  signerAddress: Hex;
+  signature: { type: 'EIP712'; typedData: TypedDataDefinition };
+};
+
+type UserStep = TransactionStep | SignatureStep;
+type BuildUserStepsResult = {
+  userSteps: UserStep[];
+};
+
+type Status = 'PENDING' | 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN';
+type GetStatusResult = { status: Status; explorerUrl?: string };
+
+// Helper functions for API requests
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: {
+      'x-api-key': API_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
   });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<T>;
+}
+
+async function getJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: 'GET',
+    headers: { 'x-api-key': API_KEY },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<T>;
+}
+
+// Core API operations for Stargate cross-chain transfers.
+// Here, we fetch quotes for sending native tokens (ETH) from Base to Optimism.
+// The options specify to use the exact source amount and include a fee tolerance of 2%.
+async function fetchQuotes(): Promise<GetQuotesResult> {
+  const payload: GetQuotesInput = {
+    srcTokenAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+    dstTokenAddress: '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',
+    srcChainKey: 'base',
+    dstChainKey: 'optimism',
+    amount: '100000000000000',
+    srcWalletAddress: account.address,
+    dstWalletAddress: account.address,
+    options: {
+      amountType: 'EXACT_SRC_AMOUNT',
+      feeTolerance: { type: 'PERCENT', amount: 2 },
+      dstNativeDropAmount: 0,
+    },
+  };
+  return postJson<GetQuotesResult>('/quotes', payload);
+}
+
+// Builds user-interactive steps required to complete the transaction.
+// Useful for both signature requests (like EIP-712) and direct EVM transactions.
+// Can be integrated into a UI to guide users through signing messages or submitting transactions.
+async function buildUserSteps(quoteId: string) {
+  return postJson<BuildUserStepsResult>('/build-user-steps', { quoteId });
+}
+
+// Submits signatures for a given quote.
+// Required for EIP-712 messages that need to be signed by the user.
+// Can be integrated into a UI to submit signatures after users have signed messages.
+async function submitSignature(quoteId: string, signatures: string[]) {
+  await postJson<Record<string, never>>('/submit-signature', { quoteId, signatures });
+}
+
+// Checks the status of a transaction.
+// Useful for monitoring the progress of a transaction.
+// Can be integrated into a UI to display the status of a transaction.
+async function getStatus(quoteId: string, txHash?: Hex) {
+  const query = txHash ? `?txHash=${txHash}` : '';
+  return getJson<GetStatusResult>(`/status/${encodeURIComponent(quoteId)}${query}`);
+}
+
+// Execution logic
+async function pollStatus(quoteId: string, txHash?: Hex) {
+  const deadline = Date.now() + 5 * 60_000;
+  for (;;) {
+    const { status } = await getStatus(quoteId, txHash);
+    if (status === 'SUCCEEDED' || status === 'FAILED' || status === 'UNKNOWN') return status;
+    if (Date.now() > deadline) return 'UNKNOWN';
+    await new Promise((r) => setTimeout(r, 4_000));
+  }
+}
+
+async function executeEvmTransaction(step: TransactionStep) {
+  const tx = step.transaction.encoded;
+  const hash = await wallet.sendTransaction({
+    account,
+    to: tx.to,
+    data: tx.data,
+    value: BigInt(tx.value ?? 0n),
+  });
+  await client.waitForTransactionReceipt({ hash });
+  return hash;
+}
+
+// Normalizes message fields for EIP-712 signing.
+export function mapMessageTypes(
+  message: any,
+) {
+  return {
+    offerer: message.offerer,
+    recipient: message.recipient,
+    inputToken: message.inputToken,
+    outputToken: message.outputToken,
+    inputAmount: BigInt(message.inputAmount),
+    outputAmount: BigInt(message.outputAmount),
+    startTime: BigInt(message.startTime),
+    endTime:  BigInt(message.endTime),
+    srcEid: message.srcEid,
+    dstEid: message.dstEid
+  }
+}
+
+async function signEip712(step: SignatureStep) {
+  const typed = step.signature.typedData;
+  const signature = await wallet.signTypedData({
+    account,
+    domain: typed.domain,
+    types: typed.types,
+    primaryType: typed.primaryType,
+    message: mapMessageTypes(typed.message),
+  });
+  return signature;
+}
+
+async function run() {
+  const quotes = await fetchQuotes();
+  // You can implement a logic to choose the best quote here
+  const quote = quotes.quotes?.[0];
+  if (!quote) throw new Error('No quote');
+  // NOTE: build user steps is not supported yet
+  // const {userSteps} = await buildUserSteps(quote.id);
+  let txHash: Hex | undefined;
+  for (const step of (quote as unknown as {userSteps: UserStep[]}).userSteps) {
+    if (step.type === 'SIGNATURE') {
+      const signature = await signEip712(step);
+      await submitSignature(quote.id, [signature]);
+    } else if (step.type === 'TRANSACTION') {
+      txHash = await executeEvmTransaction(step);
+    }
+  }
+
+  const status = await pollStatus(quote.id, txHash);
+  console.log('Final status:', status);
+}
+
+void run();
