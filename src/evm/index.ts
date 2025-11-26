@@ -4,9 +4,9 @@ import { base } from 'viem/chains';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-// The code demonstrates how to use the Stargate API to fetch quotes and execute transactions.
+// The code demonstrates how to use the LayerZero API to fetch quotes and execute transactions.
 // Setup: initialize wallet and client
-const API = 'https://stargate.finance/api/v2';
+const API = 'https://transfer.layerzero-api.com/v1';
 const API_KEY = process.env.STARGATE_API_KEY!;
 const PRIVATE_KEY = process.env.EVM_PRIVATE_KEY as Hex;
 const account = privateKeyToAccount(PRIVATE_KEY);

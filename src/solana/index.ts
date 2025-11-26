@@ -4,7 +4,7 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 // Setup: initialize wallet and client
-const API = 'https://stargate.finance/api/v2';
+const API = 'https://transfer.layerzero-api.com/v1';
 const API_KEY = process.env.STARGATE_API_KEY!;
 const PRIVATE_KEY = process.env.SOLANA_PRIVATE_KEY!;
 const connection = new web3.Connection(web3.clusterApiUrl('mainnet-beta'), 'confirmed');
